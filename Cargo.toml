@@ -1,0 +1,7 @@
+[workspace]
+members = [
+  "cp-guard",
+  "xtask",
+]
+resolver = "2"
+
