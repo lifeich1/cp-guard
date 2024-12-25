@@ -9,3 +9,4 @@ edition = "2021"
 axum = "0.7.9"
 serde = { version = "1.0.216", features = ["derive"] }
 tokio = { version = "1.42.0", features = ["full"] }
+tracing-subscriber = "0.3.19"
