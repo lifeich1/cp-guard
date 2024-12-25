@@ -10,13 +10,15 @@ async fn main() {
     let app = Router::new().route("/", post(handle_parse_result));
 
     // use impossible acmX port.
+    println!("listening ...");
     let listener = tokio::net::TcpListener::bind("localhost:10042")
         .await
         .unwrap();
+    println!("serving ...");
     axum::serve(listener, app).await.unwrap();
 }
 
 async fn handle_parse_result(Json(payload): Json<ParseResult>) -> (StatusCode, &'static str) {
-    println!("recv parse result: {:?}", payload);
+    println!("recv parse result: {payload:?}");
     (StatusCode::CREATED, "Gotta")
 }

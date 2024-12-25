@@ -4,4 +4,5 @@ members = [
   "xtask",
 ]
 resolver = "2"
+default-members = ["cp-guard"]
 
