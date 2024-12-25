@@ -282,6 +282,7 @@ name = "cp-guard"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "clap 4.5.23",
  "serde",
  "tokio",
  "tracing-subscriber",
