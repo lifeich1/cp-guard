@@ -54,6 +54,9 @@
 
           shellHook = ''
             export SHELL=zsh
+            if [ -f Session.vim ]; then
+              exec nvim -S Session.vim
+            fi
             exec zsh
           '';
         };
