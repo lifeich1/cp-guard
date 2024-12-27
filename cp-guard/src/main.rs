@@ -43,7 +43,7 @@ async fn handle_parse_result(
     cli: Arc<Cli>,
 ) -> (StatusCode, &'static str) {
     debug!("userdir: {}, recv parse result: {payload:?}", cli.userdir);
-    if let Err(e) = dump_to_cp_dir(payload, &cli.userdir) {
+    if let Err(e) = dump_to_cp_dir(&payload, &cli.userdir) {
         error!("dump_to_cp_dir error: {e:?}");
     }
     (StatusCode::CREATED, "Gotta")

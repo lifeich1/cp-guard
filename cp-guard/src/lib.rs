@@ -1,9 +1,10 @@
 use anyhow::{bail, Context, Result};
-use serde::Deserialize;
+use log::info;
+use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ParseResult {
     pub name: String,
@@ -20,14 +21,14 @@ pub struct ParseResult {
     pub batch: BatchDesc,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Testcase {
     pub input: String,
     pub output: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct InputDesc {
     #[serde(rename = "type")]
@@ -36,7 +37,7 @@ pub struct InputDesc {
     pub pattern: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputDesc {
     #[serde(rename = "type")]
@@ -44,32 +45,27 @@ pub struct OutputDesc {
     pub file_name: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct LangSettings {
     pub java: Option<JavaLangSetting>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct JavaLangSetting {
     pub main_class: String,
     pub task_class: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchDesc {
     pub id: String,
     pub size: u64,
 }
 
-fn dstdir(r: &ParseResult) -> Result<String> {
-    // TODO cf & atcoder
-    bail!("mismatch dstdir of url: {}", r.url);
-}
-
-fn write_file(dir: &PathBuf, id: usize, ext: &'static str, text: &str) -> Result<()> {
+fn write_file(dir: &Path, id: usize, ext: &'static str, text: &str) -> Result<()> {
     let name = dir.join(id.to_string()).with_extension(ext);
     fs::write(&name, text).with_context(|| format!("error write {name:?}"))
 }
@@ -77,15 +73,51 @@ fn write_file(dir: &PathBuf, id: usize, ext: &'static str, text: &str) -> Result
 /// Dump parse result to competition directory.
 /// # Errors
 /// Throw error breaks dumping process.
-pub fn dump_to_cp_dir(result: ParseResult, topdir: &str) -> Result<()> {
-    let subdir = dstdir(&result)?;
+pub fn dump_to_cp_dir(result: &ParseResult, topdir: &str) -> Result<()> {
+    let subdir = dstdir(result)?;
     let dir = Path::new(topdir).join(subdir);
     fs::create_dir_all(&dir).with_context(|| format!("mkdir -p {dir:?}"))?;
-    for (test, id) in result.tests.into_iter().zip(1..) {
+    for (test, id) in result.tests.iter().zip(1..) {
         write_file(&dir, id, "in", &test.input)?;
         write_file(&dir, id, "out", &test.output)?;
     }
-    let meta = dir.join("meta.json");
-    // TODO dump meta json
+    let metapath = dir.join("meta.json");
+    let meta = fs::File::create(&metapath).with_context(|| format!("error create {metapath:?}"))?;
+    serde_json::to_writer(meta, &result)?;
+    info!("dump [{}]({}) done.", result.name, result.url);
     Ok(())
+}
+
+fn dstdir(r: &ParseResult) -> Result<String> {
+    // TODO cf & atcoder
+    bail!("mismatch dstdir of url: {}", r.url);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dstdir_eq(url: &'static str, subdir: &'static str) {
+        let res = dstdir(&ParseResult {
+            url: url.to_owned(),
+            ..Default::default()
+        });
+        println!("res: {res:?}");
+        assert!(res.is_ok());
+        assert_eq!(res.ok(), Some(subdir.to_owned()));
+    }
+
+    #[test]
+    fn test_cf_url() {
+        dstdir_eq("https://codeforces.com/contest/2051/problem/C", "2051/c");
+        dstdir_eq("https://codeforces.com/problemset/problem/2041/N", "2041/n");
+    }
+
+    #[test]
+    fn test_atcoder_url() {
+        dstdir_eq(
+            "https://atcoder.jp/contests/abc384/tasks/abc384_e",
+            "abc384/e",
+        );
+    }
 }
