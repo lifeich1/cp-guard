@@ -1,6 +1,7 @@
 use axum::{http::StatusCode, routing::post, Json, Router};
 use clap::Parser;
-use cp_guard::ParseResult;
+use cp_guard::{dump_to_cp_dir, ParseResult};
+use log::{debug, error};
 use std::sync::Arc;
 
 #[derive(Parser, Debug)]
@@ -10,6 +11,8 @@ struct Cli {
 
 #[tokio::main]
 async fn main() {
+    env_logger::builder().format_timestamp(None).init();
+
     let cli = Arc::new(Cli::parse());
     println!("cli: {:?}", &cli);
 
@@ -39,6 +42,9 @@ async fn handle_parse_result(
     Json(payload): Json<ParseResult>,
     cli: Arc<Cli>,
 ) -> (StatusCode, &'static str) {
-    println!("userdir: {}, recv parse result: {payload:?}", cli.userdir);
+    debug!("userdir: {}, recv parse result: {payload:?}", cli.userdir);
+    if let Err(e) = dump_to_cp_dir(payload, &cli.userdir) {
+        error!("dump_to_cp_dir error: {e:?}");
+    }
     (StatusCode::CREATED, "Gotta")
 }
