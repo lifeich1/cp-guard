@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use lazy_regex::regex_captures;
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -89,7 +90,23 @@ pub fn dump_to_cp_dir(result: &ParseResult, topdir: &str) -> Result<()> {
 }
 
 fn dstdir(r: &ParseResult) -> Result<String> {
-    // TODO cf & atcoder
+    let url = &r.url;
+    if let Some((_, contest, prob)) =
+        regex_captures!(r#"https://codeforces.com/contest/(\d+)/problem/(\w+)"#, url)
+    {
+        return Ok(format!("{contest}/{}", prob.to_lowercase()));
+    }
+    if let Some((_, contest, prob)) = regex_captures!(
+        r#"https://codeforces.com/problemset/problem/(\d+)/(\w+)"#,
+        url
+    ) {
+        return Ok(format!("{contest}/{}", prob.to_lowercase()));
+    }
+    if let Some((_, contest, prob)) =
+        regex_captures!(r#"https://atcoder.jp/contests/\w+/tasks/(\w+)_(\w+)"#, url)
+    {
+        return Ok(format!("{contest}/{prob}"));
+    }
     bail!("mismatch dstdir of url: {}", r.url);
 }
 
