@@ -11,10 +11,8 @@ struct Cli {
 
 #[tokio::main]
 async fn main() {
-    env_logger::builder().format_timestamp(None).init();
-
     let cli = Arc::new(Cli::parse());
-    println!("cli: {:?}", &cli);
+    error!("cli: {:?}", &cli);
 
     // initialize tracing
     tracing_subscriber::fmt::init();
@@ -29,11 +27,11 @@ async fn main() {
     );
 
     // use impossible acmX port.
-    println!("listening ...");
+    error!("listening ...");
     let listener = tokio::net::TcpListener::bind("localhost:10042")
         .await
         .unwrap();
-    println!("serving ...");
+    error!("serving ...");
     axum::serve(listener, app).await.unwrap();
 }
 

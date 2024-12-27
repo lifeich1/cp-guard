@@ -80,7 +80,7 @@ pub fn dump_to_cp_dir(result: &ParseResult, topdir: &str) -> Result<()> {
     fs::create_dir_all(&dir).with_context(|| format!("mkdir -p {dir:?}"))?;
     for (test, id) in result.tests.iter().zip(1..) {
         write_file(&dir, id, "in", &test.input)?;
-        write_file(&dir, id, "out", &test.output)?;
+        write_file(&dir, id, "ans", &test.output)?;
     }
     let metapath = dir.join("meta.json");
     let meta = fs::File::create(&metapath).with_context(|| format!("error create {metapath:?}"))?;

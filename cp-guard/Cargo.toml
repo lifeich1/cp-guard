@@ -9,7 +9,6 @@ edition = "2021"
 anyhow = { version = "1.0.95", features = ["backtrace"] }
 axum = "0.7.9"
 clap = { version = "4.5.23", features = ["derive"] }
-env_logger = "0.11.6"
 lazy-regex = "3.4.1"
 log = "0.4.22"
 serde = { version = "1.0.216", features = ["derive"] }
