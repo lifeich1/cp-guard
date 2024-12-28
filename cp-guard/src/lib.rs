@@ -189,10 +189,17 @@ impl NotifyProxyCtx {
         debug!("before send notify {self:?}");
         Notification::new()
             .appname(module_path!())
+            .timeout(Duration::from_secs(5))
             .summary(&format!("{hint} - {group}"))
             .body(&text)
             .show()
-            .inspect_err(|e| error!("error send notify {:?}: {e:?}", self))
+            .inspect_err(|e| {
+                if cfg!(test) {
+                    panic!("error send notify {self:?}: {e:?}");
+                } else {
+                    error!("error send notify {self:?}: {e:?}");
+                }
+            })
             .ok();
         debug!("done send notify");
     }
@@ -218,11 +225,10 @@ impl NotifyProxyCtx {
             self.err_cnt += 1;
         }
         let size = newbatch.batch.size.try_into().unwrap_or(1);
+        self.batch = Some(newbatch);
         if self.ok_cnt + self.err_cnt == size {
             self.notify("done");
             self.reset();
-        } else {
-            self.batch = Some(newbatch);
         }
     }
 }
@@ -274,5 +280,18 @@ mod tests {
             "https://atcoder.jp/contests/abc384/tasks/abc384_e",
             "abc384/e",
         );
+    }
+
+    #[test]
+    fn test_handle_new_batch_one_prob() {
+        let mut ctx = NotifyProxyCtx::default();
+        ctx.handle_new_batch(Some(BatchDumpRes {
+            batch: BatchDesc {
+                id: "fake-batch-id".to_owned(),
+                size: 1,
+            },
+            group: "test group".to_owned(),
+            code: Some("test01/a".to_owned()),
+        }));
     }
 }
