@@ -4,6 +4,7 @@ use log::{debug, error, info};
 use notify_rust::Notification;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -76,6 +77,7 @@ pub struct BatchDumpRes {
     batch: BatchDesc,
     group: String,
     code: Option<String>,
+    ctx: Option<OsString>,
 }
 
 fn write_file(dir: &Path, id: usize, ext: &'static str, text: &str) -> Result<()> {
@@ -92,10 +94,16 @@ pub fn dump_to_cp_dir(
     tx: &mpsc::Sender<BatchDumpRes>,
 ) -> Result<()> {
     let dump = dump_to_cp_dir_impl(result, topdir);
+    let (code, ctx) = dump
+        .as_ref()
+        .cloned()
+        .ok()
+        .map_or((None, None), |(a, b)| (Some(a), Some(b)));
     tx.try_send(BatchDumpRes {
         batch: result.batch.clone(),
         group: result.group.clone(),
-        code: dump.as_ref().cloned().ok(),
+        code,
+        ctx,
     })
     .inspect_err(|e| {
         error!(
@@ -108,10 +116,11 @@ pub fn dump_to_cp_dir(
     Ok(())
 }
 
-/// return subdir(code)
-fn dump_to_cp_dir_impl(result: &ParseResult, topdir: &str) -> Result<String> {
-    let subdir = dstdir(result)?;
+/// return subdir(code), current context
+fn dump_to_cp_dir_impl(result: &ParseResult, topdir: &str) -> Result<(String, OsString)> {
+    let (subdir, ctx) = dstdir(result)?;
     let dir = Path::new(topdir).join(&subdir);
+    let ctx = Path::new(topdir).join(ctx).into_os_string();
     fs::create_dir_all(&dir).with_context(|| format!("mkdir -p {dir:?}"))?;
     for (test, id) in result.tests.iter().zip(1..) {
         write_file(&dir, id, "in", &test.input)?;
@@ -121,12 +130,13 @@ fn dump_to_cp_dir_impl(result: &ParseResult, topdir: &str) -> Result<String> {
     let meta = fs::File::create(&metapath).with_context(|| format!("error create {metapath:?}"))?;
     serde_json::to_writer(meta, &result)?;
     info!("dump [{}]({}) done.", result.name, result.url);
-    Ok(subdir)
+    Ok((subdir, ctx))
 }
 
 #[derive(Default, Debug)]
 struct NotifyProxyCtx {
     batch: Option<BatchDumpRes>,
+    ctx: Option<OsString>,
     ok_cnt: usize,
     err_cnt: usize,
     code_set: BTreeSet<String>,
@@ -161,6 +171,7 @@ impl NotifyProxyCtx {
         self.err_cnt = 0;
         self.code_set.clear();
         self.batch = None;
+        self.ctx = None;
     }
 
     fn notify(&self, hint: &'static str) {
@@ -182,10 +193,31 @@ impl NotifyProxyCtx {
             text.push(',');
         }
 
-        let group = self
+        let mut group = self
             .batch
             .as_ref()
             .map_or_else(|| "unknown".to_owned(), |b| b.group.clone());
+        let filepath_current_opt = self.ctx.as_ref().and_then(|c| {
+            Path::new(c)
+                .parent()
+                .map(|p| p.join("current-context"))
+                .and_then(|a| {
+                    Path::new(c)
+                        .file_name()
+                        .and_then(OsStr::to_str)
+                        .map(|b| (a, b))
+                })
+        });
+        if let Some((filepath, current)) = filepath_current_opt {
+            if let Err(e) = fs::write(filepath, current) {
+                error!("error write current_context of {:?}: {e:?}", &self.ctx);
+                group = format!("WERRCTX: {group}");
+            }
+        } else {
+            error!("bad ctx: {:?}", &self.ctx);
+            group = format!("ERRCTX: {group}");
+        }
+
         debug!("before send notify {self:?}");
         Notification::new()
             .appname(module_path!())
@@ -226,6 +258,9 @@ impl NotifyProxyCtx {
             self.err_cnt += 1;
         }
         let size = newbatch.batch.size.try_into().unwrap_or(1);
+        if newbatch.ctx.is_some() {
+            self.ctx.clone_from(&newbatch.ctx);
+        }
         self.batch = Some(newbatch);
         if self.ok_cnt + self.err_cnt == size {
             self.notify("DONE");
@@ -234,23 +269,29 @@ impl NotifyProxyCtx {
     }
 }
 
-fn dstdir(r: &ParseResult) -> Result<String> {
+fn dstdir(r: &ParseResult) -> Result<(String, String)> {
     let url = &r.url;
     if let Some((_, contest, prob)) =
         regex_captures!(r#"https://codeforces.com/contest/(\d+)/problem/(\w+)"#, url)
     {
-        return Ok(format!("{contest}/{}", prob.to_lowercase()));
+        return Ok((
+            format!("{contest}/{}", prob.to_lowercase()),
+            contest.to_owned(),
+        ));
     }
     if let Some((_, contest, prob)) = regex_captures!(
         r#"https://codeforces.com/problemset/problem/(\d+)/(\w+)"#,
         url
     ) {
-        return Ok(format!("{contest}/{}", prob.to_lowercase()));
+        return Ok((
+            format!("{contest}/{}", prob.to_lowercase()),
+            contest.to_owned(),
+        ));
     }
     if let Some((_, contest, prob)) =
         regex_captures!(r#"https://atcoder.jp/contests/\w+/tasks/(\w+)_(\w+)"#, url)
     {
-        return Ok(format!("{contest}/{prob}"));
+        return Ok((format!("{contest}/{prob}"), contest.to_owned()));
     }
     bail!("mismatch dstdir of url: {}", r.url);
 }
@@ -259,20 +300,28 @@ fn dstdir(r: &ParseResult) -> Result<String> {
 mod tests {
     use super::*;
 
-    fn dstdir_eq(url: &'static str, subdir: &'static str) {
+    fn dstdir_eq(url: &'static str, subdir: &'static str, ctx: &'static str) {
         let res = dstdir(&ParseResult {
             url: url.to_owned(),
             ..Default::default()
         });
         println!("res: {res:?}");
         assert!(res.is_ok());
-        assert_eq!(res.ok(), Some(subdir.to_owned()));
+        assert_eq!(res.ok(), Some((subdir.to_owned(), ctx.to_owned())));
     }
 
     #[test]
     fn test_cf_url() {
-        dstdir_eq("https://codeforces.com/contest/2051/problem/C", "2051/c");
-        dstdir_eq("https://codeforces.com/problemset/problem/2041/N", "2041/n");
+        dstdir_eq(
+            "https://codeforces.com/contest/2051/problem/C",
+            "2051/c",
+            "2051",
+        );
+        dstdir_eq(
+            "https://codeforces.com/problemset/problem/2041/N",
+            "2041/n",
+            "2041",
+        );
     }
 
     #[test]
@@ -280,6 +329,7 @@ mod tests {
         dstdir_eq(
             "https://atcoder.jp/contests/abc384/tasks/abc384_e",
             "abc384/e",
+            "abc384",
         );
     }
 
@@ -302,6 +352,7 @@ mod tests {
             },
             group: "test group".to_owned(),
             code: Some("test01/a".to_owned()),
+            ctx: Some("/tmp/test01".into()),
         }));
         assert!(ctx.batch.is_none());
     }
@@ -318,12 +369,14 @@ mod tests {
             },
             group: group.clone(),
             code: None,
+            ctx: Some("/tmp/test02".into()),
         }));
         assert!(ctx.batch.is_some());
         ctx.handle_new_batch(Some(BatchDumpRes {
             batch: BatchDesc { id, size: 2 },
             group,
             code: Some("test02/b".to_owned()),
+            ctx: Some("/tmp/test02".into()),
         }));
         assert!(ctx.batch.is_none());
     }
@@ -337,6 +390,7 @@ mod tests {
             batch: BatchDesc { id, size: 2 },
             group,
             code: Some("test02/b".to_owned()),
+            ctx: Some("/tmp/test02".into()),
         }));
         assert!(ctx.batch.is_some());
         ctx.handle_new_batch(None);
@@ -352,6 +406,7 @@ mod tests {
             batch: BatchDesc { id, size: 2 },
             group: group.clone(),
             code: Some("test02/a".to_owned()),
+            ctx: Some("/tmp/test02".into()),
         }));
         assert!(ctx.batch.is_some());
         let id = "unexpect-fake-batch-id".to_owned();
@@ -359,6 +414,7 @@ mod tests {
             batch: BatchDesc { id, size: 2 },
             group,
             code: Some("test02/b".to_owned()),
+            ctx: Some("/tmp/test02".into()),
         }));
         assert!(ctx.batch.is_none());
     }
