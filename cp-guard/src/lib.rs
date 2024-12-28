@@ -1,9 +1,15 @@
 use anyhow::{bail, Context, Result};
 use lazy_regex::regex_captures;
-use log::info;
+use log::{debug, error, info};
+use notify_rust::Notification;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio::time::error::Elapsed;
+use tokio::time::{timeout_at, Instant};
 
 #[derive(Deserialize, Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -59,11 +65,18 @@ pub struct JavaLangSetting {
     pub task_class: String,
 }
 
-#[derive(Deserialize, Serialize, Debug, Default)]
+#[derive(Deserialize, Serialize, Debug, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchDesc {
     pub id: String,
     pub size: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct BatchDumpRes {
+    batch: BatchDesc,
+    group: String,
+    code: Option<String>,
 }
 
 fn write_file(dir: &Path, id: usize, ext: &'static str, text: &str) -> Result<()> {
@@ -74,9 +87,32 @@ fn write_file(dir: &Path, id: usize, ext: &'static str, text: &str) -> Result<()
 /// Dump parse result to competition directory.
 /// # Errors
 /// Throw error breaks dumping process.
-pub fn dump_to_cp_dir(result: &ParseResult, topdir: &str) -> Result<()> {
+pub fn dump_to_cp_dir(
+    result: &ParseResult,
+    topdir: &str,
+    tx: &mpsc::Sender<BatchDumpRes>,
+) -> Result<()> {
+    let dump = dump_to_cp_dir_impl(result, topdir);
+    tx.try_send(BatchDumpRes {
+        batch: result.batch.clone(),
+        group: result.group.clone(),
+        code: dump.as_ref().cloned().ok(),
+    })
+    .inspect_err(|e| {
+        error!(
+            "notify queue for [{}]({}) result {:?}: {:?}",
+            result.name, result.url, &dump, e
+        );
+    })
+    .ok();
+    dump?;
+    Ok(())
+}
+
+/// return subdir(code)
+fn dump_to_cp_dir_impl(result: &ParseResult, topdir: &str) -> Result<String> {
     let subdir = dstdir(result)?;
-    let dir = Path::new(topdir).join(subdir);
+    let dir = Path::new(topdir).join(&subdir);
     fs::create_dir_all(&dir).with_context(|| format!("mkdir -p {dir:?}"))?;
     for (test, id) in result.tests.iter().zip(1..) {
         write_file(&dir, id, "in", &test.input)?;
@@ -86,7 +122,110 @@ pub fn dump_to_cp_dir(result: &ParseResult, topdir: &str) -> Result<()> {
     let meta = fs::File::create(&metapath).with_context(|| format!("error create {metapath:?}"))?;
     serde_json::to_writer(meta, &result)?;
     info!("dump [{}]({}) done.", result.name, result.url);
-    Ok(())
+    Ok(subdir)
+}
+
+#[derive(Default, Debug)]
+struct NotifyProxyCtx {
+    batch: Option<BatchDumpRes>,
+    ok_cnt: usize,
+    err_cnt: usize,
+    code_set: HashSet<String>,
+}
+
+pub async fn notify_proxy(mut rx: mpsc::Receiver<BatchDumpRes>) {
+    let mut ctx = NotifyProxyCtx::default();
+    let mut deadline = Instant::now();
+    error!("notify_proxy enter loop ..");
+    loop {
+        let mut newbatch: Option<BatchDumpRes>;
+        if ctx.batch.is_none() {
+            newbatch = rx.recv().await;
+            if newbatch.is_none() {
+                error!("notify_proxy channel closed!");
+                return;
+            }
+            deadline = Instant::now() + Duration::from_secs(5);
+        } else {
+            match timeout_at(deadline, rx.recv()).await {
+                Err(_) | Ok(None) => newbatch = None,
+                Ok(v) => newbatch = v,
+            }
+        }
+        ctx.handle_new_batch(newbatch);
+    }
+}
+
+impl NotifyProxyCtx {
+    fn reset(&mut self) {
+        self.ok_cnt = 0;
+        self.err_cnt = 0;
+        self.code_set.clear();
+        self.batch = None;
+    }
+
+    fn notify(&self, hint: &'static str) {
+        let mut text = String::with_capacity(256);
+        let size: usize = self
+            .batch
+            .as_ref()
+            .map_or(0, |b| b.batch.size)
+            .try_into()
+            .unwrap_or(0);
+        text.push_str(&format!(
+            "{}/{}/{} ok: ",
+            self.ok_cnt,
+            self.err_cnt,
+            size.saturating_sub(self.ok_cnt + self.err_cnt)
+        ));
+        for code in &self.code_set {
+            text.push_str(code);
+            text.push(',');
+        }
+
+        let group = self
+            .batch
+            .as_ref()
+            .map_or_else(|| "unknown".to_owned(), |b| b.group.clone());
+        debug!("before send notify {self:?}");
+        Notification::new()
+            .appname(module_path!())
+            .summary(&format!("{hint} - {group}"))
+            .body(&text)
+            .show()
+            .inspect_err(|e| error!("error send notify {:?}: {e:?}", self))
+            .ok();
+        debug!("done send notify");
+    }
+
+    fn handle_new_batch(&mut self, newbatch: Option<BatchDumpRes>) {
+        let Some(mut newbatch) = newbatch else {
+            error!("batch deadline reach: {self:?}");
+            self.notify("timeout");
+            self.reset();
+            return;
+        };
+        if let Some(last) = &self.batch {
+            if last.batch.id != newbatch.batch.id {
+                error!("unexpected diff batch id, last {self:?}, arrived {newbatch:?}");
+                self.reset();
+                return;
+            }
+        }
+        if let Some(code) = newbatch.code.take() {
+            self.code_set.insert(code);
+            self.ok_cnt += 1;
+        } else {
+            self.err_cnt += 1;
+        }
+        let size = newbatch.batch.size.try_into().unwrap_or(1);
+        if self.ok_cnt + self.err_cnt == size {
+            self.notify("done");
+            self.reset();
+        } else {
+            self.batch = Some(newbatch);
+        }
+    }
 }
 
 fn dstdir(r: &ParseResult) -> Result<String> {
