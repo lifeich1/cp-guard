@@ -47,6 +47,7 @@
             rustfmt
             pkg-config
             cargo-edit
+            nix-update
           ];
 
           # Specify the rust-src path (many editors rely on this)
