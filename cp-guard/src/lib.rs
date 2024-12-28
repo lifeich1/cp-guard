@@ -8,7 +8,6 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time::error::Elapsed;
 use tokio::time::{timeout_at, Instant};
 
 #[derive(Deserialize, Serialize, Debug, Default)]
@@ -138,7 +137,7 @@ pub async fn notify_proxy(mut rx: mpsc::Receiver<BatchDumpRes>) {
     let mut deadline = Instant::now();
     error!("notify_proxy enter loop ..");
     loop {
-        let mut newbatch: Option<BatchDumpRes>;
+        let newbatch: Option<BatchDumpRes>;
         if ctx.batch.is_none() {
             newbatch = rx.recv().await;
             if newbatch.is_none() {
