@@ -190,7 +190,7 @@ impl NotifyProxyCtx {
         Notification::new()
             .appname(module_path!())
             .timeout(Duration::from_secs(5))
-            .summary(&format!("{hint} - {group}"))
+            .summary(&format!("{hint}: {group}"))
             .body(&text)
             .show()
             .inspect_err(|e| {
@@ -207,13 +207,14 @@ impl NotifyProxyCtx {
     fn handle_new_batch(&mut self, newbatch: Option<BatchDumpRes>) {
         let Some(mut newbatch) = newbatch else {
             error!("batch deadline reach: {self:?}");
-            self.notify("timeout");
+            self.notify("TIMEOUT");
             self.reset();
             return;
         };
         if let Some(last) = &self.batch {
             if last.batch.id != newbatch.batch.id {
                 error!("unexpected diff batch id, last {self:?}, arrived {newbatch:?}");
+                self.notify("BATCH MISMATCH");
                 self.reset();
                 return;
             }
@@ -227,7 +228,7 @@ impl NotifyProxyCtx {
         let size = newbatch.batch.size.try_into().unwrap_or(1);
         self.batch = Some(newbatch);
         if self.ok_cnt + self.err_cnt == size {
-            self.notify("done");
+            self.notify("DONE");
             self.reset();
         }
     }
@@ -293,6 +294,7 @@ mod tests {
             group: "test group".to_owned(),
             code: Some("test01/a".to_owned()),
         }));
+        assert!(ctx.batch.is_none());
     }
 
     #[test]
@@ -306,13 +308,15 @@ mod tests {
                 size: 2,
             },
             group: group.clone(),
-            code: Some("test02/a".to_owned()),
+            code: None,
         }));
+        assert!(ctx.batch.is_some());
         ctx.handle_new_batch(Some(BatchDumpRes {
             batch: BatchDesc { id, size: 2 },
             group,
             code: Some("test02/b".to_owned()),
         }));
+        assert!(ctx.batch.is_none());
     }
 
     #[test]
@@ -325,6 +329,28 @@ mod tests {
             group,
             code: Some("test02/b".to_owned()),
         }));
+        assert!(ctx.batch.is_some());
         ctx.handle_new_batch(None);
+        assert!(ctx.batch.is_none());
+    }
+
+    #[test]
+    fn test_handle_new_batch_id_unexpect() {
+        let mut ctx = NotifyProxyCtx::default();
+        let group = "test group 2".to_owned();
+        let id = "fake-batch-id".to_owned();
+        ctx.handle_new_batch(Some(BatchDumpRes {
+            batch: BatchDesc { id, size: 2 },
+            group: group.clone(),
+            code: Some("test02/a".to_owned()),
+        }));
+        assert!(ctx.batch.is_some());
+        let id = "unexpect-fake-batch-id".to_owned();
+        ctx.handle_new_batch(Some(BatchDumpRes {
+            batch: BatchDesc { id, size: 2 },
+            group,
+            code: Some("test02/b".to_owned()),
+        }));
+        assert!(ctx.batch.is_none());
     }
 }
