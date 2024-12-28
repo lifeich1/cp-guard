@@ -3,7 +3,7 @@ use lazy_regex::regex_captures;
 use log::{debug, error, info};
 use notify_rust::Notification;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -129,7 +129,7 @@ struct NotifyProxyCtx {
     batch: Option<BatchDumpRes>,
     ok_cnt: usize,
     err_cnt: usize,
-    code_set: HashSet<String>,
+    code_set: BTreeSet<String>,
 }
 
 pub async fn notify_proxy(mut rx: mpsc::Receiver<BatchDumpRes>) {

@@ -42,7 +42,7 @@ async fn main() {
         .await
         .unwrap();
     error!("starting notify_proxy ...");
-    tokio::spawn(async { move || notify_proxy(rx) });
+    tokio::spawn(async move { notify_proxy(rx).await });
     error!("serving ...");
     axum::serve(listener, app).await.unwrap();
 }
