@@ -21,7 +21,7 @@
         # Executed by `nix build`
         packages.default = toolchain.buildRustPackage {
           pname = "cp-guard";
-          version = "0.2.1";
+          version = "0.2.2";
           src = ./.;
           cargoLock = {
             lockFile = ./Cargo.lock;
