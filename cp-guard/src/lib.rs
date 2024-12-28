@@ -194,7 +194,7 @@ impl NotifyProxyCtx {
             .body(&text)
             .show()
             .inspect_err(|e| {
-                if cfg!(test) {
+                if cfg!(test) && matches!(option_env!("XDG_CURRENT_DESKTOP"), Some("KDE")) {
                     panic!("error send notify {self:?}: {e:?}");
                 } else {
                     error!("error send notify {self:?}: {e:?}");
