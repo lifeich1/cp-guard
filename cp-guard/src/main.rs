@@ -18,7 +18,7 @@ struct Bench {
 #[tokio::main]
 async fn main() {
     let (tx, rx) = mpsc::channel(32);
-    let bench = Arc::new(Bnech {
+    let bench = Arc::new(Bench {
         cli: Cli::parse(),
         tx,
     });
@@ -42,7 +42,7 @@ async fn main() {
         .await
         .unwrap();
     error!("starting notify_proxy ...");
-    tokio::spawn(async move || notify_proxy(rx).await);
+    tokio::spawn(async { move || notify_proxy(rx) });
     error!("serving ...");
     axum::serve(listener, app).await.unwrap();
 }
@@ -52,7 +52,10 @@ async fn handle_parse_result(
     Json(payload): Json<ParseResult>,
     bench: Arc<Bench>,
 ) -> (StatusCode, &'static str) {
-    debug!("userdir: {}, recv parse result: {payload:?}", cli.userdir);
+    debug!(
+        "userdir: {}, recv parse result: {payload:?}",
+        bench.cli.userdir
+    );
     if let Err(e) = dump_to_cp_dir(&payload, &bench.cli.userdir, &bench.tx) {
         error!("dump_to_cp_dir error: {e:?}");
     }
