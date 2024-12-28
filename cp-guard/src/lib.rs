@@ -294,4 +294,37 @@ mod tests {
             code: Some("test01/a".to_owned()),
         }));
     }
+
+    #[test]
+    fn test_handle_new_batch_two_prob() {
+        let mut ctx = NotifyProxyCtx::default();
+        let group = "test group 2".to_owned();
+        let id = "fake-batch-id".to_owned();
+        ctx.handle_new_batch(Some(BatchDumpRes {
+            batch: BatchDesc {
+                id: id.clone(),
+                size: 2,
+            },
+            group: group.clone(),
+            code: Some("test02/a".to_owned()),
+        }));
+        ctx.handle_new_batch(Some(BatchDumpRes {
+            batch: BatchDesc { id, size: 2 },
+            group,
+            code: Some("test02/b".to_owned()),
+        }));
+    }
+
+    #[test]
+    fn test_handle_new_batch_two_prob_timeout() {
+        let mut ctx = NotifyProxyCtx::default();
+        let group = "test group 2".to_owned();
+        let id = "fake-batch-id".to_owned();
+        ctx.handle_new_batch(Some(BatchDumpRes {
+            batch: BatchDesc { id, size: 2 },
+            group,
+            code: Some("test02/b".to_owned()),
+        }));
+        ctx.handle_new_batch(None);
+    }
 }
