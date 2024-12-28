@@ -284,6 +284,15 @@ mod tests {
     }
 
     #[test]
+    fn test_mismatch_url() {
+        let res = dstdir(&ParseResult {
+            url: "always-mismatch".to_owned(),
+            ..Default::default()
+        });
+        assert!(res.is_err());
+    }
+
+    #[test]
     fn test_handle_new_batch_one_prob() {
         let mut ctx = NotifyProxyCtx::default();
         ctx.handle_new_batch(Some(BatchDumpRes {
