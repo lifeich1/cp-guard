@@ -5,6 +5,7 @@ use notify_rust::Notification;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -82,7 +83,7 @@ pub struct BatchDumpRes {
 
 fn write_file(dir: &Path, id: usize, ext: &'static str, text: &str) -> Result<()> {
     let name = dir.join(id.to_string()).with_extension(ext);
-    fs::write(&name, text).with_context(|| format!("error write {name:?}"))
+    fs::write(&name, text).with_context(|| format!("error write {}", name.display()))
 }
 
 /// Dump parse result to competition directory.
@@ -121,13 +122,14 @@ fn dump_to_cp_dir_impl(result: &ParseResult, topdir: &str) -> Result<(String, Os
     let (subdir, ctx) = dstdir(result)?;
     let dir = Path::new(topdir).join(&subdir);
     let ctx = Path::new(topdir).join(ctx).into_os_string();
-    fs::create_dir_all(&dir).with_context(|| format!("mkdir -p {dir:?}"))?;
+    fs::create_dir_all(&dir).with_context(|| format!("mkdir -p {}", dir.display()))?;
     for (test, id) in result.tests.iter().zip(1..) {
         write_file(&dir, id, "in", &test.input)?;
         write_file(&dir, id, "ans", &test.output)?;
     }
     let metapath = dir.join("meta.json");
-    let meta = fs::File::create(&metapath).with_context(|| format!("error create {metapath:?}"))?;
+    let meta = fs::File::create(&metapath)
+        .with_context(|| format!("error create {}", metapath.display()))?;
     serde_json::to_writer(meta, &result)?;
     info!("dump [{}]({}) done.", result.name, result.url);
     Ok((subdir, ctx))
@@ -182,12 +184,14 @@ impl NotifyProxyCtx {
             .map_or(0, |b| b.batch.size)
             .try_into()
             .unwrap_or(0);
-        text.push_str(&format!(
+        write!(
+            text,
             "{}/{}/{} ok: ",
             self.ok_cnt,
             self.err_cnt,
             size.saturating_sub(self.ok_cnt + self.err_cnt)
-        ));
+        )
+        .unwrap();
         for code in &self.code_set {
             text.push_str(code);
             text.push(',');
@@ -201,12 +205,7 @@ impl NotifyProxyCtx {
             Path::new(c)
                 .parent()
                 .map(|p| p.join("current-context"))
-                .and_then(|a| {
-                    Path::new(c)
-                        .file_name()
-                        .and_then(OsStr::to_str)
-                        .map(|b| (a, b))
-                })
+                .zip(Path::new(c).file_name().and_then(OsStr::to_str))
         });
         if let Some((filepath, current)) = filepath_current_opt {
             if let Err(e) = fs::write(filepath, current) {
